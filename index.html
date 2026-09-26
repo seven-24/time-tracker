@@ -84,26 +84,27 @@
 
     /* 入力フォーム */
     .add-form {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 76px auto;
+      grid-template-areas: "name duration add" "url url url";
       gap: 8px;
       margin-bottom: 20px;
     }
-    .task-input {
-      flex: 3;
+    .task-input, .url-input, .duration-input, .edit-input {
       padding: 10px 12px;
       border: 1px solid #cbd5e1;
       border-radius: 8px;
       font-size: 14px;
     }
+    .task-input { grid-area: name; min-width: 0; }
+    .url-input { grid-area: url; min-width: 0; }
     .duration-input {
-      width: 70px;
-      padding: 10px;
-      border: 1px solid #cbd5e1;
-      border-radius: 8px;
-      font-size: 14px;
+      grid-area: duration;
+      width: 76px;
       text-align: center;
     }
     .add-btn {
+      grid-area: add;
       padding: 10px 16px;
       background-color: #0f172a;
       color: #fff;
@@ -128,22 +129,61 @@
     .task-item {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
+      gap: 10px;
       background: #fff;
       padding: 12px 14px;
       border-radius: 8px;
       border: 1px solid #e2e8f0;
       box-shadow: 0 1px 2px rgba(0,0,0,0.03);
     }
-    .task-name { font-weight: bold; font-size: 14px; margin-bottom: 2px; }
+    .task-details { min-width: 0; flex: 1; }
+    .task-name { font-weight: bold; font-size: 14px; margin-bottom: 2px; overflow-wrap: anywhere; }
     .task-time-range { font-size: 12px; color: #64748b; }
-    .delete-btn {
+    .task-link {
+      display: inline-block;
+      margin-top: 4px;
+      font-size: 12px;
+      color: #2563eb;
+      overflow-wrap: anywhere;
+    }
+    .task-actions {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 2px;
+    }
+    .task-action {
       background: none;
       border: none;
-      color: #ef4444;
-      font-size: 18px;
+      color: #475569;
+      font-size: 16px;
       cursor: pointer;
-      padding: 4px 8px;
+      padding: 4px;
+      min-width: 28px;
+      min-height: 28px;
+    }
+    .task-action:hover { background: #f1f5f9; border-radius: 4px; }
+    .delete-btn { color: #ef4444; }
+    .drag-handle { cursor: grab; touch-action: none; }
+    .dragging { opacity: 0.45; }
+    .drop-before { border-top: 2px solid #2563eb; }
+    .drop-after { border-bottom: 2px solid #2563eb; }
+    .edit-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 76px;
+      gap: 8px;
+    }
+    .edit-input { min-width: 0; width: 100%; }
+    .edit-name { grid-column: 1; }
+    .edit-duration { grid-column: 2; text-align: center; }
+    .edit-url, .edit-actions { grid-column: 1 / -1; }
+    .edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .edit-actions button {
+      padding: 7px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
     }
   </style>
 </head>
@@ -181,8 +221,9 @@
 
   <!-- タスク追加フォーム -->
   <form class="add-form" onsubmit="handleAddTask(event)">
-    <input type="text" id="new-task-name" class="task-input" placeholder="タスク名（例: 朝食）" required>
-    <input type="number" id="new-task-duration" class="duration-input" min="1" value="10" placeholder="分" required>
+    <input type="text" id="new-task-name" class="task-input" placeholder="タスク名（例: 朝食）" aria-label="タスク名" required>
+    <input type="number" id="new-task-duration" class="duration-input" min="1" value="10" placeholder="分" aria-label="所要時間（分）" required>
+    <input type="url" id="new-task-url" class="url-input" placeholder="URL（任意）" aria-label="タスクのURL">
     <button type="submit" class="add-btn">追加</button>
   </form>
 
@@ -199,6 +240,8 @@
     { id: '3', name: '持ち物チェック', duration: 5 }
   ];
   let currentMode = 'forward'; // 'forward' または 'reverse'
+  let editingTaskId = null;
+  let draggedTaskId = null;
 
   // 現在時刻をHH:mmで取得
   function getCurrentTime() {
@@ -231,14 +274,112 @@
     e.preventDefault();
     const nameInput = document.getElementById('new-task-name');
     const durInput = document.getElementById('new-task-duration');
+    const urlInput = document.getElementById('new-task-url');
     const name = nameInput.value.trim();
     const duration = parseInt(durInput.value, 10);
     if (!name || isNaN(duration) || duration <= 0) return;
 
-    tasks.push({ id: Date.now().toString(), name, duration });
+    tasks.push({ id: Date.now().toString(), name, duration, url: urlInput.value.trim() });
     saveTasks();
     nameInput.value = '';
+    urlInput.value = '';
     render();
+  }
+
+  function moveTask(id, offset) {
+    const index = tasks.findIndex(task => task.id === id);
+    const targetIndex = index + offset;
+    if (index < 0 || targetIndex < 0 || targetIndex >= tasks.length) return;
+    [tasks[index], tasks[targetIndex]] = [tasks[targetIndex], tasks[index]];
+    saveTasks();
+    render();
+  }
+
+  function reorderTask(sourceId, targetId, insertAfter) {
+    if (!sourceId || sourceId === targetId) return;
+    const sourceIndex = tasks.findIndex(task => task.id === sourceId);
+    if (sourceIndex < 0) return;
+    const [movedTask] = tasks.splice(sourceIndex, 1);
+    let targetIndex = tasks.findIndex(task => task.id === targetId);
+    if (targetIndex < 0) {
+      tasks.splice(sourceIndex, 0, movedTask);
+      return;
+    }
+    if (insertAfter) targetIndex++;
+    tasks.splice(targetIndex, 0, movedTask);
+    saveTasks();
+    render();
+  }
+
+  function editTask(id) {
+    editingTaskId = id;
+    render();
+  }
+
+  function createEditForm(task) {
+    const form = document.createElement('form');
+    form.className = 'edit-form';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'edit-input edit-name';
+    nameInput.value = task.name;
+    nameInput.setAttribute('aria-label', 'タスク名');
+    nameInput.required = true;
+
+    const durationInput = document.createElement('input');
+    durationInput.type = 'number';
+    durationInput.className = 'edit-input edit-duration';
+    durationInput.value = task.duration;
+    durationInput.min = '1';
+    durationInput.setAttribute('aria-label', '所要時間（分）');
+    durationInput.required = true;
+
+    const urlInput = document.createElement('input');
+    urlInput.type = 'url';
+    urlInput.className = 'edit-input edit-url';
+    urlInput.value = task.url || '';
+    urlInput.placeholder = 'URL（任意）';
+    urlInput.setAttribute('aria-label', 'タスクのURL');
+
+    const actions = document.createElement('div');
+    actions.className = 'edit-actions';
+    const saveButton = document.createElement('button');
+    saveButton.type = 'submit';
+    saveButton.textContent = '保存';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = 'キャンセル';
+    cancelButton.addEventListener('click', () => {
+      editingTaskId = null;
+      render();
+    });
+    actions.append(saveButton, cancelButton);
+    form.append(nameInput, durationInput, urlInput, actions);
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const name = nameInput.value.trim();
+      const duration = parseInt(durationInput.value, 10);
+      if (!name || !Number.isInteger(duration) || duration <= 0 || !form.reportValidity()) return;
+      task.name = name;
+      task.duration = duration;
+      task.url = urlInput.value.trim();
+      editingTaskId = null;
+      saveTasks();
+      render();
+    });
+    return form;
+  }
+
+  function createActionButton(label, title, className, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'task-action ' + className;
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.addEventListener('click', onClick);
+    return button;
   }
 
   function deleteTask(id) {
@@ -289,13 +430,73 @@
 
       const item = document.createElement('div');
       item.className = 'task-item';
-      item.innerHTML = `
-        <div>
-          <div class="task-name">${task.name}</div>
-          <div class="task-time-range">${formatMinutes(taskStart)} 〜 ${formatMinutes(taskEnd)} (${task.duration}分)</div>
-        </div>
-        <button class="delete-btn" onclick="deleteTask('${task.id}')" title="削除">×</button>
-      `;
+      item.dataset.taskId = task.id;
+
+      const details = document.createElement('div');
+      details.className = 'task-details';
+      if (editingTaskId === task.id) {
+        details.appendChild(createEditForm(task));
+      } else {
+        const name = document.createElement('div');
+        name.className = 'task-name';
+        name.textContent = task.name;
+        const timeRange = document.createElement('div');
+        timeRange.className = 'task-time-range';
+        timeRange.textContent = `${formatMinutes(taskStart)} 〜 ${formatMinutes(taskEnd)} (${task.duration}分)`;
+        details.append(name, timeRange);
+        if (task.url) {
+          try {
+            const url = new URL(task.url);
+            if (url.protocol === 'http:' || url.protocol === 'https:') {
+              const link = document.createElement('a');
+              link.className = 'task-link';
+              link.href = url.href;
+              link.target = '_blank';
+              link.rel = 'noopener noreferrer';
+              link.textContent = task.url;
+              details.appendChild(link);
+            }
+          } catch (error) {}
+        }
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'task-actions';
+      if (editingTaskId !== task.id) {
+        const dragHandle = createActionButton('⋮⋮', 'ドラッグして並べ替え', 'drag-handle', () => {});
+        dragHandle.draggable = true;
+        dragHandle.addEventListener('dragstart', event => {
+          draggedTaskId = task.id;
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', task.id);
+          item.classList.add('dragging');
+        });
+        dragHandle.addEventListener('dragend', () => {
+          draggedTaskId = null;
+          document.querySelectorAll('.task-item').forEach(row => row.classList.remove('dragging', 'drop-before', 'drop-after'));
+        });
+        item.addEventListener('dragover', event => {
+          event.preventDefault();
+          if (!draggedTaskId || draggedTaskId === task.id) return;
+          const insertAfter = event.clientY > item.getBoundingClientRect().top + item.offsetHeight / 2;
+          item.classList.toggle('drop-before', !insertAfter);
+          item.classList.toggle('drop-after', insertAfter);
+        });
+        item.addEventListener('drop', event => {
+          event.preventDefault();
+          const insertAfter = event.clientY > item.getBoundingClientRect().top + item.offsetHeight / 2;
+          reorderTask(event.dataTransfer.getData('text/plain') || draggedTaskId, task.id, insertAfter);
+          draggedTaskId = null;
+        });
+        actions.append(
+          dragHandle,
+          createActionButton('↑', '上へ', 'move-up-btn', () => moveTask(task.id, -1)),
+          createActionButton('↓', '下へ', 'move-down-btn', () => moveTask(task.id, 1)),
+          createActionButton('✎', '編集', 'edit-btn', () => editTask(task.id)),
+          createActionButton('×', '削除', 'delete-btn', () => deleteTask(task.id))
+        );
+      }
+      item.append(details, actions);
       listEl.appendChild(item);
     });
   }
