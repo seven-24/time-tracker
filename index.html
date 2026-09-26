@@ -165,7 +165,7 @@
   <div class="card">
     <div class="time-row">
       <label id="base-time-label" style="font-weight: bold; font-size: 14px; color: #1e3a8a;">開始時刻:</label>
-      <input type="time" id="base-time" class="time-input" onchange="render()">
+      <input type="time" id="base-time" class="time-input" onchange="saveBaseTime(); render()">
     </div>
     <div class="summary-row">
       <div>
@@ -207,7 +207,12 @@
   }
 
   // 初期化
-  document.getElementById('base-time').value = getCurrentTime();
+  const savedBaseTime = localStorage.getItem('my_scheduler_base_time');
+  document.getElementById('base-time').value = savedBaseTime || getCurrentTime();
+
+  function saveBaseTime() {
+    localStorage.setItem('my_scheduler_base_time', document.getElementById('base-time').value);
+  }
 
   function saveTasks() {
     localStorage.setItem('my_scheduler_tasks', JSON.stringify(tasks));
